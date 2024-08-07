@@ -386,7 +386,8 @@ Some analysis do the normalization for you (like PCA), and others don't (like k-
 
 Since both PCA and k-means only take numerical variables, let's select them now.  
 ```{r selecting only numerical vars}
-weather_n 
+weather_n <- weather %>%
+  dplyr::select(-c(year:strength_gtex))
 
 weather_n
 ```
@@ -421,15 +422,19 @@ knitr::include_graphics("https://miro.medium.com/v2/resize:fit:1200/1*V4H3Cu8qGr
 Let's run PCA for our weather data.  
 
 ```{r pca model}
-mod_pca 
+mod_pca <- prcomp(weather_n, scale. = T)
+mod_pca
 
+summary(mod_pca)
 ```
 
 ## Choosing number of PCs  
 Based on scree plot (total variance):  
 ```{r pca checking number of components}
 # Scree plot
-
+fviz_eig(mod_pca,
+         
+         addlabels = T)
 ```
     
 PCs 1 and 2 explain ~35% and ~26% (61%) of total variance.
@@ -437,7 +442,13 @@ This indicates that original variables were correlated (as we expected).
 
 If wanted to use enough PCs to explain 70% of total variance, how many would we need?  
 ```{r PCs to explain 70pct variance}
-
+mod_pca %>%
+  get_eig() %>%
+  mutate(pc = 1:nrow(.)) %>%
+  ggplot(aes(x = pc,
+         y = cumulative.variance.percent)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 70)
 
 ```
     
@@ -463,19 +474,25 @@ mod_pca$rotation %>%
 
 ```
 
-Which variables contributed most to PC1, regardless of direction?  
+Which variables contributed most to PC1, regardless of direction? 
+
+Mean day length
 
 ```{r variables contributing to PC1}
-
+fviz_contrib(mod_pca,
+             choice = "var",
+             axes = 1
+             )
 ```
-  
+  (red line is averall average contribution)
 Let's check the eigenvectors for both PCs 1 and 2 variables:  
 
 ```{r pca variable contribution }
 fviz_pca_var(mod_pca, 
              col.var = "contrib", # Color by contributions to the PC
              gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
-             repel = TRUE     # Avoid text overlapping
+             repel = TRUE,     # Avoid text overlapping
+             select.var = list(contrib = 5)
              )
 
 ```
@@ -485,7 +502,8 @@ The longer is the eigenvector for a given variable, the more important it is tow
 Let's plot PC1 vs PC2 scores, look for any groupings.  
 
 ```{r PC1 vs PC2}
-
+fviz_pca_ind(mod_pca,
+             label = F)
 ```
   
 Appears that some groups exist.  
@@ -502,34 +520,42 @@ Let's add the first 4 PCs to our original dataset and run a regression versus gr
 
 ```{r pca scores}
 # Extract first 4 PCs scores
-pca_scores 
+pca_scores <- mod_pca$x %>%
+  as.data.frame() %>%
+  dplyr::select(PC1:PC4)
 
 pca_scores
 ```
 
 ```{r pca regression}
 # Adding PCs 1-4 scores to original data set
-weather_postpca 
+weather_postpca <- weather %>%
+  bind_cols(pca_scores)
 
 # Regression of yield ~ PCs
 
-lm_pca 
+lm_pca <- lm(strength_gtex ~ PC1 + PC2 + PC3 + PC4,
+             data = weather_postpca)
 
 # Summary  
 summary(lm_pca)
 ```
-
+PC2 and PC3 have a significant effect in strength
 
 ```{r pca regression}
-# Checking VIF
-
+# Checking VIF (variance inflation vactor)
+vif(lm_pca)
 ```
 
 ```{r pca regression plots}
 # Plotting strength vs PC1
-
+ggplot(weather_postpca,
+       aes(x = PC1,
+           y = strength_gtex)) +
+  geom_point() +
+  geom_smooth(method = "lm")
 ```
-
+no relationship, as we would expect
 
 ```{r pca regression plots}
 # Plotting strength vs PC2
@@ -539,6 +565,7 @@ ggplot(weather_postpca,
   geom_smooth(method = "lm")
 
 ```
+
 
 ```{r pca regression plots}
 # Plotting strength vs PC3
@@ -588,9 +615,12 @@ k-means does not normalize our data for us like PCA did, so we will need to do t
 
 ```{r}
 # normalizing the data
-weather_norm  
+weather_norm <- weather_n %>%
+  mutate(across(everything(), ~scale(.x)))
 
 weather_norm
+
+summary(weather_norm)
 ```
 
 Also, we need to define the number of clusters we want.  
@@ -598,7 +628,9 @@ Any thoughts?
 Let's try 2.  
 
 ```{r kmeans model }
-mod_km 
+mod_km <- kmeans(weather_norm,
+                 centers = 6,
+                 nstart = 10)
 
 mod_km
 ```
@@ -607,7 +639,10 @@ Since the choice of k can be subjective, we will need to find an objective way t
 
 ```{r choosing k - total error}
 # Total error x k
-
+fviz_nbclust(weather_norm,
+             method = "wss",
+             k.max = 10,
+             FUNcluster = kmeans)
 ```
 
 
@@ -626,13 +661,19 @@ silhouette: k=4
 Let's go with 4 clusters.  
 
 ```{r mod_km4 }
-mod_km4 
+mod_km4 <- kmeans(weather_norm,
+                  centers = 4,
+                  nstart = 10)
 
 mod_km4
 ```
 
 How many observations per cluster?
 ```{r}
+weather %>%
+  mutate(cluster = mod_km4$cluster) %>%
+  group_by(cluster) %>%
+  tally()
 
 ```
 
@@ -668,7 +709,8 @@ We could actually run ANOVA models for each original variable of the form
 and extract cluster mean and pairwise comparison to understand what variables had significant differences among clusters.  
 
 ```{r kmeans PCA plot}
-
+fviz_cluster(mod_km4,
+             data = weather_norm)
 ```
   
 Notice how, behind the scenes, the fviz_cluster function ran a PCA and is showing us a plot with PCs 1 and 2 on the axis (same result as we obtained on the PCA analysis).   
